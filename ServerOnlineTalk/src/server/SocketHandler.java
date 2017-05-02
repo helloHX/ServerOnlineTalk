@@ -21,6 +21,7 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.xml.sax.InputSource;
 
+import service.DeleteEntityService;
 import service.InsertEntityService;
 import service.QueryMessageService;
 import service.QueryUserService;
@@ -85,6 +86,8 @@ public class SocketHandler implements Runnable {
 			return queryUser(root, writer);
 		case "makeFriend":
 			return makeFriend(root, writer);
+		case "deleteFriend":
+			return deleteFriend(root, writer);
 		case "result":
 			return result(root, writer);
 		case "message":
@@ -99,7 +102,15 @@ public class SocketHandler implements Runnable {
 		return true;
 	}
 
-	
+	private boolean deleteFriend(Element root, PrintWriter writer) {
+		DeleteEntityService service = new DeleteEntityService();
+		String userID = root.getAttribute("userID");
+		String friendID = root.getAttribute("friendID");
+		service.deleteFriend(userID, friendID);
+		sentMessage("<result command='deleteFriend' state='ok'/>", writer);
+		getFriends(userID,writer);
+		return true;
+	}
 
 	public boolean file(Element root, PrintWriter writer) {
 
