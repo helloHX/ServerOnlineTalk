@@ -33,7 +33,7 @@ import entity.User;
 public class SocketHandler implements Runnable {
 	private Socket mysocket;
 	public static QueryUserService queryUserservice = new QueryUserService();
-	public static final String userPath = "D:\\测试垃圾\\ServeronlineChart";
+	public static final String userPath = "C:\\ServeronlineChart";
 
 	public SocketHandler(Socket socket) {
 		this.mysocket = socket;
@@ -49,9 +49,9 @@ public class SocketHandler implements Runnable {
 			BufferedReader bufferedReader = new BufferedReader(reader);
 
 			while (online) {
-				String mes = bufferedReader.readLine();
+				byte[] mes = bufferedReader.readLine().getBytes("UTF-8");
 				System.out.println("server_run" + mes);
-				online = dispatch(getData(mes), writer);
+				online = dispatch(getData(new String(mes)), writer);
 			}
 			writer.close();
 			bufferedReader.close();
@@ -62,6 +62,7 @@ public class SocketHandler implements Runnable {
 	}
 
 	public static Element getData(String mes) {
+		System.out.println("Server_getData" + mes);
 		Element root = null;
 		try {
 			DocumentBuilderFactory factory = DocumentBuilderFactory
@@ -108,7 +109,7 @@ public class SocketHandler implements Runnable {
 		String friendID = root.getAttribute("friendID");
 		service.deleteFriend(userID, friendID);
 		sentMessage("<result command='deleteFriend' state='ok'/>", writer);
-		getFriends(userID,writer);
+		getFriends(userID, writer);
 		return true;
 	}
 
@@ -217,11 +218,23 @@ public class SocketHandler implements Runnable {
 		saveMessage(message);
 	}
 
+	private void notificatFriend(String userID, boolean state) {
+		List<User> friendsList = queryUserservice.queryFriends(userID);
+		for (User friend : friendsList) {// 添加在线状态
+			User currentFriend = ServerTalk.users.get(friend.getUserID());
+			if (currentFriend != null)
+				sentMessage("<changeFriendState friendID = '" + userID
+						+ "' state = '" + state + "'/>",
+						currentFriend.getWriter());
+		}
+	}
+
 	public boolean getFriends(Element root, PrintWriter writer) {
 		String userID = root.getAttribute("userID");
 		return getFriends(userID, writer);
 	}
-	public boolean getFriends(String userID,PrintWriter writer) {
+
+	public boolean getFriends(String userID, PrintWriter writer) {
 		List<User> friendsList = queryUserservice.queryFriends(userID);
 		for (User friend : friendsList) {// 添加在线状态
 			if (ServerTalk.users.containsKey(friend.getUserID()))
@@ -237,12 +250,14 @@ public class SocketHandler implements Runnable {
 	public boolean queryUser(Element root, PrintWriter writer) {
 		String userID = root.getAttribute("userID");
 		User user = queryUserservice.queryUser(userID);
-		if(user != null){
-		String userJson = JSONObject.fromObject(user).toString();
-		sentMessage("<result command='queryUser' message='" + userJson
-				+ "' state='ok'/>", writer);
-		}else{
-			sentMessage("<result command='queryUser' message='查无此人' state='error'/>", writer);
+		if (user != null) {
+			String userJson = JSONObject.fromObject(user).toString();
+			sentMessage("<result command='queryUser' message='" + userJson
+					+ "' state='ok'/>", writer);
+		} else {
+			sentMessage(
+					"<result command='queryUser' message='查无此人' state='error'/>",
+					writer);
 		}
 		return true;
 	}
@@ -253,26 +268,29 @@ public class SocketHandler implements Runnable {
 		String friendID = root.getAttribute("friendID");
 		service.addFriend(userID, friendID);
 		sentMessage("<result command='makeFriend' state='ok'/>", writer);
-		getFriends(userID,writer);
+		getFriends(userID, writer);
 		return true;
 	}
+
 	public boolean login(Element root, PrintWriter writer) {
 		String userID = root.getAttribute("userID");
 		String password = root.getAttribute("password");
 		if (!ServerTalk.users.containsKey(userID)) {
 			User user = verify(userID, password);
-			String userJson = JSONObject.fromObject(user).toString();
-			System.out.println("serveLogin" + userJson);
-			ServerTalk.users.put(user.getUserID(), user);
-			user.setWriter(writer);
 			if (user != null) {
+				String userJson = JSONObject.fromObject(user).toString();
+				System.out.println("serveLogin" + userJson);
+				ServerTalk.users.put(user.getUserID(), user);
+				user.setWriter(writer);
 				sentMessage("<result command='login' message='" + userJson
 						+ "' state='ok'/>", writer);
-				clearMesCache(userID, writer);
+				getFriends(userID, writer);// 获取好友列表
+				clearMesCache(userID, writer);// 清空服务器消息缓存
+				notificatFriend(userID, true);
+			} else {
+				sentMessage("<result command='login' message='" + "不存在账号或已经登录"
+						+ "' state='error'/>", writer);
 			}
-		} else {
-			sentMessage("<result command='login' message='" + "不存在账号或已经登录"
-					+ "' state='error'/>", writer);
 		}
 		return true;
 	}
@@ -370,6 +388,7 @@ public class SocketHandler implements Runnable {
 		String userID = root.getAttribute("userID");
 		if (ServerTalk.users.containsKey(userID)) {
 			User user = ServerTalk.users.remove(userID);
+			notificatFriend(user.getUserID(), false);
 			sentMessage("<result command = 'logout' state = 'ok' />",
 					user.getWriter());
 			return false;
@@ -383,7 +402,7 @@ public class SocketHandler implements Runnable {
 	public void sentMessage(String mes, PrintWriter writer) {
 		System.out.println("server_sent" + mes);
 		try {
-			writer.println(mes);
+			writer.println(new String(mes.getBytes("UTF-8")));
 			writer.flush();
 		} catch (Exception e) {
 			e.printStackTrace();
