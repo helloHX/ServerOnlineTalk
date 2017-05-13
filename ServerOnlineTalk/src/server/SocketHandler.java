@@ -1,13 +1,13 @@
 package server;
 
-import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.io.StringReader;
-import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
@@ -26,7 +26,6 @@ import service.InsertEntityService;
 import service.QueryMessageService;
 import service.QueryUserService;
 import util.EntityIDFactory;
-import util.WriteByteData;
 import entity.Message;
 import entity.User;
 
@@ -43,15 +42,13 @@ public class SocketHandler implements Runnable {
 	public void run() {
 		try {
 			boolean online = true;
-			PrintWriter writer = new PrintWriter(mysocket.getOutputStream());
+			PrintWriter writer = new PrintWriter((new OutputStreamWriter(
+					mysocket.getOutputStream(), "UTF-8")));
 			InputStreamReader reader = new InputStreamReader(
-					mysocket.getInputStream());
+					mysocket.getInputStream(), "UTF-8");
 			BufferedReader bufferedReader = new BufferedReader(reader);
-
 			while (online) {
-				byte[] mes = bufferedReader.readLine().getBytes("UTF-8");
-				System.out.println("server_run" + mes);
-				online = dispatch(getData(new String(mes)), writer);
+				online = dispatch(getData(bufferedReader.readLine()), writer);
 			}
 			writer.close();
 			bufferedReader.close();
@@ -86,13 +83,13 @@ public class SocketHandler implements Runnable {
 		case "queryUser":
 			return queryUser(root, writer);
 		case "makeFriend":
-			return makeFriend(root, writer);
+			return requestFriend(root);
 		case "deleteFriend":
 			return deleteFriend(root, writer);
 		case "result":
 			return result(root, writer);
 		case "message":
-			return message(root, writer);
+			return message(root);
 		case "file":
 			return file(root, writer);
 		case "image":
@@ -103,6 +100,31 @@ public class SocketHandler implements Runnable {
 		return true;
 	}
 
+	public boolean result(Element root, PrintWriter writer) {
+		String command = root.getAttribute("command");
+		String state = root.getAttribute("state");
+		String message = root.getAttribute("message");
+		
+		switch (command) {
+		case "file":
+		case "image":
+			if (state.equals("ok")) {
+				UploadHandler uploadHandler = new UploadHandler(message,
+						mysocket.getInetAddress().getHostAddress());
+				uploadHandler.start();
+			} else
+				System.out.println(message);
+			break;
+		case "makeFriend":
+			if (state.equals("ok")) {
+				addfriends(message, writer);
+			} else {
+				// 添加失败回复
+			}
+			break;
+		}
+		return true;
+	}
 	private boolean deleteFriend(Element root, PrintWriter writer) {
 		DeleteEntityService service = new DeleteEntityService();
 		String userID = root.getAttribute("userID");
@@ -140,7 +162,7 @@ public class SocketHandler implements Runnable {
 					+ "' state='ok'/>", writer);
 			downOverSingal.await();
 
-			transmitFile(message, new File(path));// 准备转发
+			transmitFile(message, path);// 准备转发
 		} catch (Exception e) {
 			e.printStackTrace();
 			sentMessage("<result command='file' message='服务器准备失败"
@@ -177,7 +199,7 @@ public class SocketHandler implements Runnable {
 					+ "' state='ok'/>", writer);
 			downOverSingal.await();
 
-			transmitIMG(message, new File(path));// 准备转发图片
+			transmitIMG(message, path);// 准备转发图片
 		} catch (Exception e) {
 			e.printStackTrace();
 			sentMessage("<result command='image' message='服务器准备失败"
@@ -186,36 +208,24 @@ public class SocketHandler implements Runnable {
 		return true;
 	}
 
-	public void transmitFile(Message message, File file) {
-		User toUser = ServerTalk.users.get(message.getToId());
-		if (toUser != null) {
-			System.out.println(toUser.getUserName());
-			sentMessage("<file fileSentIime = '" + message.getMessageTime()
-					+ "' " + "fileName = '" + file.getAbsolutePath()
-					+ "' fileLength = '" + file.length() + "' fromId = '"
-					+ message.getFormId() + "' toId = '" + message.getToId()
-					+ "'/>", toUser.getWriter());
-			message.setStatus(0);
-		} else {
-			message.setStatus(1);
-		}
-		saveMessage(message);
+	public void transmitFile(Message message, String Path) {
+		File file = new File(Path);
+		String fileInfo = "<file fileSentIime = '" + message.getMessageTime()
+				+ "' " + "fileName = '" + file.getAbsolutePath()
+				+ "' fileLength = '" + file.length() + "' fromId = '"
+				+ message.getFormId() + "' toId = '" + message.getToId()
+				+ "'/>";
+		sentMessage(message, fileInfo, message.getToId());
 	}
 
-	public void transmitIMG(Message message, File img) {
-		User toUser = ServerTalk.users.get(message.getToId());
-		if (toUser != null) {
-			System.out.println(toUser.getUserName());
-			sentMessage("<image imageSentIime = '" + message.getMessageTime()
-					+ "' " + "imageName = '" + img.getAbsolutePath()
-					+ "' imageLength = '" + img.length() + "' fromId = '"
-					+ message.getFormId() + "' toId = '" + message.getToId()
-					+ "'/>", toUser.getWriter());
-			message.setStatus(0);
-		} else {
-			message.setStatus(1);
-		}
-		saveMessage(message);
+	public void transmitIMG(Message message, String Path) {
+		File img = new File(Path);
+		String imginfo = "<image imageSentIime = '" + message.getMessageTime()
+				+ "' " + "imageName = '" + img.getAbsolutePath()
+				+ "' imageLength = '" + img.length() + "' fromId = '"
+				+ message.getFormId() + "' toId = '" + message.getToId()
+				+ "'/>";
+		sentMessage(message, imginfo, message.getToId());
 	}
 
 	private void notificatFriend(String userID, boolean state) {
@@ -262,14 +272,27 @@ public class SocketHandler implements Runnable {
 		return true;
 	}
 
-	private boolean makeFriend(Element root, PrintWriter writer) {
-		InsertEntityService service = new InsertEntityService();
+	private boolean requestFriend(Element root) {
+
 		String userID = root.getAttribute("userID");
 		String friendID = root.getAttribute("friendID");
-		service.addFriend(userID, friendID);
-		sentMessage("<result command='makeFriend' state='ok'/>", writer);
-		getFriends(userID, writer);
+
+		Message message = new Message();
+		message.setFormId(userID);
+		message.setToId(friendID);
+		message.setMessageType("MKF");
+		Date currentDate = new Date();
+		String messageTime = currentDate.toLocaleString();
+		message.setMessageTime(messageTime);
+
+		requestFriend(message);
 		return true;
+	}
+
+	private void requestFriend(Message message) {
+		String reqMes = "<makeFriend userID = '" + message.getFormId()
+				+ "' friendID = '" + message.getToId() + "'/>";
+		sentMessage(message, reqMes, message.getToId());
 	}
 
 	public boolean login(Element root, PrintWriter writer) {
@@ -290,6 +313,7 @@ public class SocketHandler implements Runnable {
 			} else {
 				sentMessage("<result command='login' message='" + "不存在账号或已经登录"
 						+ "' state='error'/>", writer);
+				return false;
 			}
 		}
 		return true;
@@ -302,20 +326,27 @@ public class SocketHandler implements Runnable {
 			System.out.println("mesType" + messages.get(i).getMessageType());
 			switch (messages.get(i).getMessageType()) {
 			case "IMG":
-				transmitIMG(messages.get(i), new File(messages.get(i)
-						.getMessage()));
+				transmitIMG(messages.get(i), messages.get(i).getMessage());
+				break;
+			case "MKF":
+				requestFriend(messages.get(i));
+				break;
+			case "RMKF":
+				addfriends(messages.get(i));
 				break;
 			case "FILE":
-				transmitFile(messages.get(i), new File(messages.get(i)
-						.getMessage()));
+				transmitFile(messages.get(i),messages.get(i)
+						.getMessage());
 				break;
 			case "MESSAGE":
-				message(messages.get(i), writer);
+				message(messages.get(i));
 				break;
 			}
 
 		}
 	}
+
+
 
 	public User verify(String userID, String password) {
 
@@ -327,51 +358,61 @@ public class SocketHandler implements Runnable {
 		}
 	}
 
-	public boolean result(Element root, PrintWriter writer) {
-		String command = root.getAttribute("command");
-		String state = root.getAttribute("state");
-		String message = root.getAttribute("message");
-		switch (command) {
-		case "file":
-		case "image":
-			if (state.equals("ok")) {
-				System.out.println("Server_result ip"
-						+ mysocket.getInetAddress().toString());
-				UploadHandler uploadHandler = new UploadHandler(message,
-						mysocket.getInetAddress().getHostAddress());
-				uploadHandler.start();
-			} else
-				System.out.println(message);
-			return true;
-		}
-		return true;
+
+
+	private void addfriends(String idInfo, PrintWriter writer) {
+
+		String[] ids = idInfo.split(",");
+		InsertEntityService service = new InsertEntityService();
+		service.addFriend(ids[0], ids[1]);// id0请求方
+
+		Message message = new Message();
+		message.setFormId(ids[0]);
+		message.setToId(ids[1]);
+		Date currentTime = new Date();
+		message.setMessageTime(currentTime.toLocaleString());
+		message.setMessageType("RMKF");
+		
+		addfriends(message);
+		
+		getFriends(ids[1], writer);
+	}
+	
+	private void addfriends(Message message){
+		String result = "<result command='makeFriend' message='" + message.getToId()
+				+ "' state='ok'/>";
+		sentMessage(message, result,message.getFormId());
 	}
 
-	public boolean message(Element root, PrintWriter writer) {
+	public void sentMessage(Message message, String data, String id) {
+		User toUser = ServerTalk.users.get(id);
+		if (toUser != null) {
+			System.out.println(toUser.getUserName());
+			sentMessage(data, toUser.getWriter());
+			message.setStatus(0);
+		} else {
+			message.setStatus(1);
+		}
+		saveMessage(message);
+	}
+
+	public boolean message(Element root) {
 		Message message = new Message();
 		message.setFormId(root.getAttribute("from"));
 		message.setToId(root.getAttribute("to"));
 		message.setMessageType("MESSAGE");
 		message.setMessageTime(root.getAttribute("messageTime"));
 		message.setMessage(root.getAttribute("message"));
-		return message(message, writer);
-	}
 
-	public boolean message(Message message, PrintWriter writer) {
-		User toUser = ServerTalk.users.get(message.getToId());
-		if (toUser != null) {
-			System.out.println(toUser.getUserName());
-			sentMessage("<message  messageTime='" + message.getMessageTime()
-					+ "' message='" + message.getMessage() + "' from='"
-					+ message.getFormId() + "' to='" + message.getToId()
-					+ "'/>", toUser.getWriter());
-			message.setStatus(0);
-		} else {
-			message.setStatus(1);
-		}
-		saveMessage(message);
-
+		message(message);
 		return true;
+	}
+	
+	private void message(Message message) {
+		String mes = "<message  messageTime='" + message.getMessageTime()
+				+ "' message='" + message.getMessage() + "' from='"
+				+ message.getFormId() + "' to='" + message.getToId() + "'/>";
+		sentMessage(message, mes, message.getToId());
 	}
 
 	public static void saveMessage(Message message) {
@@ -402,7 +443,7 @@ public class SocketHandler implements Runnable {
 	public void sentMessage(String mes, PrintWriter writer) {
 		System.out.println("server_sent" + mes);
 		try {
-			writer.println(new String(mes.getBytes("UTF-8")));
+			writer.println(mes);
 			writer.flush();
 		} catch (Exception e) {
 			e.printStackTrace();

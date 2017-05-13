@@ -3,7 +3,6 @@ package util;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.PrintWriter;
 
 public class WriteByteData {
 	private FileOutputStream outPut;
@@ -31,7 +30,6 @@ public class WriteByteData {
 	
 	public synchronized void SaveData(byte[] data,int off,int dataLength){
 		try {
-			System.out.println("Server_SaveData" + dataLength);
 			outPut.write(data, off, dataLength);
 		} catch (IOException e) {
 			e.printStackTrace();

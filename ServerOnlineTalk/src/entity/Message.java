@@ -9,7 +9,7 @@ public class Message {
 	private String messageId;
 	@Column(columnName="Message",nullable=false,length=255)
 	private String message;
-	@Column(columnName="MessageCreateTime",nullable=false,length=0)
+	@Column(columnName="MessageCreateTime",nullable=false,length=255)
 	private String messageTime;
 	@Column(columnName="FromID",nullable=false,length=255)
 	private String formId;

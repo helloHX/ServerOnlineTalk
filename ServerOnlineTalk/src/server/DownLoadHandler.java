@@ -33,7 +33,6 @@ public class DownLoadHandler extends Thread {
 			for (int i = 0; i < priceNum; i++) {
 				byte[] data = new byte[1024];
 				dataStream.read(data);
-				System.out.println(1);
 				filewriter.SaveData(data, 0, data.length);
 			}
 			if (endlength != 0) {
